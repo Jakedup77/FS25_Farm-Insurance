@@ -1,0 +1,145 @@
+-- farmInsurance.lua
+
+-- Configuration
+local defaultCropInsurancePremium = 0.05  -- 5% of crop value
+local defaultVehicleInsurancePremium = 0.02 -- 2% of vehicle value
+local defaultBuildingInsurancePremium = 0.01 -- 1% of building value
+local defaultLandInsurancePremium = 0.005 -- 0.5% of land value
+
+-- Data structure to store insurance policies
+local insurancePolicies = {} -- Key: assetId, Value: {policyType, coverageAmount, premium, expiryDate}
+
+-- Function to load configuration (from XML)
+local function loadConfiguration()
+    -- ... (code to read settings from XML) ...
+end
+
+-- Function to save insurance data
+local function saveInsuranceData()
+    -- ... (code to save the insurancePolicies table) ...
+end
+
+-- Function to load insurance data
+local function loadInsuranceData()
+    -- ... (code to load the insurancePolicies table) ...
+end
+
+-- Function to calculate insurance premium
+local function calculatePremium(assetType, assetValue, policyType)
+    local premiumPercentage = 0
+    if assetType == "crop" then
+        premiumPercentage = defaultCropInsurancePremium
+    elseif assetType == "vehicle" then
+        premiumPercentage = defaultVehicleInsurancePremium
+    elseif assetType == "building" then
+        premiumPercentage = defaultBuildingInsurancePremium
+    elseif assetType == "land" then
+        premiumPercentage = defaultLandInsurancePremium
+    end
+
+    -- Adjust premium based on policy type (e.g., higher for comprehensive)
+    if policyType == "comprehensive" then
+        premiumPercentage = premiumPercentage * 1.2 -- 20% higher
+    elseif policyType == "basic" then
+        premiumPercentage = premiumPercentage * 0.8 -- 20% lower
+    end
+
+    return assetValue * premiumPercentage
+end
+
+-- Function to offer an insurance policy
+local function offerInsurance(assetId, assetType, assetValue, policyType, expiryDate)
+    local premium = calculatePremium(assetType, assetValue, policyType)
+    --  Offer the player the policy through a GUI.
+    local response = showInsuranceOfferGUI(assetId, assetType, policyType, premium, expiryDate) -- Hypothetical GUI function
+
+    if response == "yes" then
+        local currentMoney = getPlayerMoney() -- Assuming this function exists
+        if currentMoney >= premium then
+            setPlayerMoney(currentMoney - premium) -- Assuming this function exists
+            insurancePolicies[assetId] = {
+                policyType = policyType,
+                coverageAmount = assetValue, -- Could be a percentage of assetValue
+                premium = premium,
+                expiryDate = expiryDate,
+            }
+            saveInsuranceData()
+            print("Insurance policy purchased for asset (ID: " .. assetId .. ").")
+        else
+            print("Insufficient funds to purchase insurance policy.")
+        end
+    end
+end
+
+-- Function to file an insurance claim
+local function fileClaim(assetId, damageAmount)
+    local policy = insurancePolicies[assetId]
+    if not policy then
+        print("No insurance policy found for asset (ID: " .. assetId .. ").")
+        return
+    end
+
+    if policy.coverageAmount >= damageAmount then
+        local currentMoney = getPlayerMoney() -- Assuming this function exists
+        setPlayerMoney(currentMoney + damageAmount) -- Assuming this function exists
+
+        print("Claim of " .. formatMoney(damageAmount) .. " paid for asset (ID: " .. assetId .. ").")
+        insurancePolicies[assetId] = nil -- Remove policy after claim
+        saveInsuranceData()
+    else
+        print("Damage exceeds coverage amount for asset (ID: " .. assetId .. ").")
+        --  You might pay out the coverage amount, or a prorated amount.
+        local currentMoney = getPlayerMoney()
+        setPlayerMoney(currentMoney + policy.coverageAmount)
+        print("Claim of " .. formatMoney(policy.coverageAmount) .. " paid for asset (ID: "..assetId..").")
+        insurancePolicies[assetId] = nil
+        saveInsuranceData()
+    end
+end
+
+-- Function to handle damage events (e.g., crop loss, vehicle accident)
+local function handleDamageEvent(assetId, assetType, damageAmount)
+    -- Check if the asset is insured
+    if insurancePolicies[assetId] then
+        fileClaim(assetId, damageAmount)
+    else
+        print("Asset (ID: " .. assetId .. ") is not insured.")
+    end
+end
+
+-- Function to handle the game update loop (for checking policy expiry, etc.)
+local function update(deltaTime)
+    --  Check for expired policies
+    local gameDate = getGameDate() -- Hypothetical function
+    for assetId, policy in pairs(insurancePolicies) do
+        if policy.expiryDate and gameDate > policy.expiryDate then
+            print("Insurance policy for asset (ID: " .. assetId .. ") has expired.")
+            insurancePolicies[assetId] = nil
+            saveInsuranceData()
+        end
+    end
+end
+
+-- Event listeners and initialization
+Events.update.add(update)
+--  Example event for when a vehicle is purchased
+-- Events.vehiclePurchased.add(onVehiclePurchased) -- Hypothetical event
+--  Example event for when crops are damaged
+-- Events.cropDamage.add(onCropDamage)       -- Hypothetical event
+
+-- Example of offering insurance when a vehicle is purchased
+local function onVehiclePurchased(vehicleId, vehiclePrice)
+    offerInsurance(vehicleId, "vehicle", vehiclePrice, "comprehensive", getGameDate() + 365) -- Example expiry: 1 year
+end
+
+-- Example of handling crop damage
+local function onCropDamage(fieldId, cropType, damagePercentage)
+    --  Calculate damageAmount based on crop value and damagePercentage
+    local cropValue = getCropValue(fieldId, cropType) -- Hypothetical function
+    local damageAmount = cropValue * damagePercentage
+    handleDamageEvent(fieldId, "crop", damageAmount)
+end
+
+-- Load configuration and insurance data
+loadConfiguration()
+loadInsuranceData()
