@@ -1,145 +1,379 @@
--- farmInsurance.lua
+-- Farming Simulator Crop Insurance Script
 
--- Configuration
-local defaultCropInsurancePremium = 0.05  -- 5% of crop value
-local defaultVehicleInsurancePremium = 0.02 -- 2% of vehicle value
-local defaultBuildingInsurancePremium = 0.01 -- 1% of building value
-local defaultLandInsurancePremium = 0.005 -- 0.5% of land value
+-- Key Concepts:
+-- 1.  Crops:  The script needs to know what crops are planted and where.
+-- 2.  Insurance Policies:  Players can purchase insurance for specific fields and crops.
+-- 3.  Damage Assessment:  The script needs to assess crop damage (e.g., from weather, pests).
+-- 4.  Payouts:  If damage occurs, the player receives a payout based on the insurance policy.
+-- 5.  Persistence:  Insurance policies and damage history should be saved and loaded.
 
--- Data structure to store insurance policies
-local insurancePolicies = {} -- Key: assetId, Value: {policyType, coverageAmount, premium, expiryDate}
+-- Globals
+local g_insurance = {}       -- Table to store insurance policies
+local g_cropData = {}       -- Table to store data about planted crops
+local g_damageHistory = {}  -- Table to store damage events
+local g_eventLog = {}
 
--- Function to load configuration (from XML)
-local function loadConfiguration()
-    -- ... (code to read settings from XML) ...
+-- Helper Functions
+local function logMessage(message)
+    -- Enhanced logging
+    print("[CropInsurance] " .. message)
+    table.insert(g_eventLog, { timestamp = DayAndTime.now(), message = message })
 end
 
--- Function to save insurance data
-local function saveInsuranceData()
-    -- ... (code to save the insurancePolicies table) ...
+local function getPlayerMoney()
+    --  Get the player's money.  Use the correct game function.
+    --  Example: return Game.economy.getPlayerMoney()
+    return 100000  -- Placeholder
 end
 
--- Function to load insurance data
-local function loadInsuranceData()
-    -- ... (code to load the insurancePolicies table) ...
+local function setPlayerMoney(amount)
+    -- Set the player's money. Use the correct game function.
+    -- Example: Game.economy.setPlayerMoney(amount)
+    logMessage("Setting player money to " .. amount)
 end
 
--- Function to calculate insurance premium
-local function calculatePremium(assetType, assetValue, policyType)
-    local premiumPercentage = 0
-    if assetType == "crop" then
-        premiumPercentage = defaultCropInsurancePremium
-    elseif assetType == "vehicle" then
-        premiumPercentage = defaultVehicleInsurancePremium
-    elseif assetType == "building" then
-        premiumPercentage = defaultBuildingInsurancePremium
-    elseif assetType == "land" then
-        premiumPercentage = defaultLandInsurancePremium
+local function addPlayerMoney(amount)
+    -- Adds money to the player
+    local current = getPlayerMoney()
+    setPlayerMoney(current + amount)
+end
+
+local function getGameTime()
+    --  Gets the game time in seconds.
+    return DayAndTime.now()
+end
+
+local function getDayOfYear()
+  -- Return the current day of the year
+  -- Example return Game.time.getDayOfYear()
+  return 1; --Placeholder
+end
+
+local function getPlantedCrop(fieldId)
+    --  Get the type of crop planted in a field.  This is a CRITICAL GAME INTERACTION.
+    --  You MUST use the correct game function.  This is a placeholder.
+    --  Example: return Game.field.getCrop(fieldId)
+    if g_cropData[fieldId] then
+      return g_cropData[fieldId].cropType
+    else
+      return nil
+    end
+    --return "wheat"  -- Placeholder
+end
+
+local function getCropYield(fieldId)
+  --Gets the yield of the crop
+  --Placeholder
+  if g_cropData[fieldId] then
+    return g_cropData[fieldId].yield
+  else
+    return 0
+  end
+end
+
+local function setCropYield(fieldId, yield)
+  --Sets the yield of the crop
+  --Placeholder
+  if g_cropData[fieldId] then
+     g_cropData[fieldId].yield = yield
+  end
+end
+
+local function getCropValue(cropType)
+    --  Get the current market value of a crop type.  CRITICAL GAME INTERACTION.
+    --  You MUST use the correct game functions.  This is a placeholder.
+    --  Example: return Game.economy.getCropPrice(cropType)
+    if cropType == "wheat" then
+        return 150  -- Placeholder
+    elseif cropType == "corn" then
+        return 200  -- Placeholder
+    else
+        return 100  -- Default
+    end
+end
+
+local function calculateCropLoss(fieldId, damagePercentage)
+    -- Calculate the crop loss in monetary value.
+    local cropType = getPlantedCrop(fieldId)
+    local cropValue = getCropValue(cropType)
+    local cropYield = getCropYield(fieldId)  -- Get the yield
+    local potentialValue = cropYield * cropValue
+    local loss = potentialValue * (damagePercentage / 100)
+    return loss
+end
+
+local function getFieldSize(fieldId)
+  --Gets the size of the field.
+  --Placeholder
+  return 10;
+end
+
+-- Insurance Functions
+local function initializeInsurance()
+    -- Initialize the insurance data.
+    g_insurance = {}
+end
+
+local function createInsurancePolicy(fieldId, cropType, coveragePercentage, premiumRate)
+    -- Create a new insurance policy for a field and crop.
+    --  Check if a policy already exists for this field.
+    if g_insurance[fieldId] then
+        logMessage("An insurance policy already exists for field " .. fieldId)
+        return false
     end
 
-    -- Adjust premium based on policy type (e.g., higher for comprehensive)
-    if policyType == "comprehensive" then
-        premiumPercentage = premiumPercentage * 1.2 -- 20% higher
-    elseif policyType == "basic" then
-        premiumPercentage = premiumPercentage * 0.8 -- 20% lower
+    local policy = {
+        fieldId = fieldId,
+        cropType = cropType,
+        coveragePercentage = coveragePercentage, -- percentage of losses covered.
+        premiumRate = premiumRate,             -- percentage of crop value
+        startDate = getGameTime(),
+        active = true,
+    }
+    g_insurance[fieldId] = policy
+    local fieldSize = getFieldSize(fieldId)
+    local cropValue = getCropValue(cropType)
+    local premium = fieldSize * cropValue * premiumRate --Simplified
+    g_insurance[fieldId].premium = premium
+    -- Charge the player the premium.
+    local success = addPlayerMoney(-premium)
+    if not success then
+      g_insurance[fieldId] = nil
+      logMessage("Failed to charge insurance premium for field " .. fieldId)
+      return false
     end
 
-    return assetValue * premiumPercentage
+    logMessage("Created insurance policy for field " .. fieldId .. " (" .. cropType .. ") with " .. coveragePercentage .. "% coverage. Premium: " .. premium)
+    return true
 end
 
--- Function to offer an insurance policy
-local function offerInsurance(assetId, assetType, assetValue, policyType, expiryDate)
-    local premium = calculatePremium(assetType, assetValue, policyType)
-    --  Offer the player the policy through a GUI.
-    local response = showInsuranceOfferGUI(assetId, assetType, policyType, premium, expiryDate) -- Hypothetical GUI function
+function getInsurancePolicies()
+  return g_insurance
+end
 
-    if response == "yes" then
-        local currentMoney = getPlayerMoney() -- Assuming this function exists
-        if currentMoney >= premium then
-            setPlayerMoney(currentMoney - premium) -- Assuming this function exists
-            insurancePolicies[assetId] = {
-                policyType = policyType,
-                coverageAmount = assetValue, -- Could be a percentage of assetValue
-                premium = premium,
-                expiryDate = expiryDate,
-            }
-            saveInsuranceData()
-            print("Insurance policy purchased for asset (ID: " .. assetId .. ").")
+local function getInsurancePolicy(fieldId)
+    -- Get the insurance policy for a specific field.
+    return g_insurance[fieldId]
+end
+
+local function cancelInsurancePolicy(fieldId)
+    -- Cancel an insurance policy.
+    if g_insurance[fieldId] then
+        g_insurance[fieldId].active = false
+        logMessage("Cancelled insurance policy for field " .. fieldId)
+        return true
+    else
+        logMessage("No insurance policy found for field " .. fieldId)
+        return false
+    end
+end
+
+local function fileDamageClaim(fieldId, damagePercentage, event)
+    -- File a damage claim for a field.
+    local policy = g_insurance[fieldId]
+    if not policy or not policy.active then
+        logMessage("No active insurance policy found for field " .. fieldId)
+        return false
+    end
+
+    local cropType = getPlantedCrop(fieldId)
+    if cropType ~= policy.cropType then
+      logMessage("Filed claim for wrong crop type. Policy is for " .. policy.cropType .. " but field has " .. cropType)
+      return false
+    end
+
+    local loss = calculateCropLoss(fieldId, damagePercentage)
+    local coverage = policy.coveragePercentage / 100
+    local payout = loss * coverage
+
+    addPlayerMoney(payout)
+    logMessage("Filed damage claim for field " .. fieldId .. ". Damage: " .. damagePercentage .. "%. Payout: " .. payout .. ". Event: " .. event)
+
+    -- Record the damage event.
+    table.insert(g_damageHistory, {
+        fieldId = fieldId,
+        cropType = cropType,
+        damagePercentage = damagePercentage,
+        loss = loss,
+        payout = payout,
+        event = event,
+        time = getGameTime(),
+    })
+    return true
+end
+
+-- Event Functions
+local function handleDamageEvent(fieldId, cropType, damagePercentage, event)
+    -- Handle a damage event.  This is called by other parts of the script or by game events.
+    logMessage("Damage event: " .. event .. " on field " .. fieldId .. " (" .. cropType .. "). Damage: " .. damagePercentage .. "%")
+    local currentCrop = getPlantedCrop(fieldId)
+    if currentCrop == cropType then
+      fileDamageClaim(fieldId, damagePercentage, event)
+      return true
+    else
+      logMessage("Damage event on field " .. fieldId .. " was not for the planted crop. Expected " .. cropType
+      .. " but field has " .. currentCrop)
+      return false
+    end
+end
+
+-- Function to simulate damage (for testing)
+function simulateDamage(fieldId, cropType, damagePercentage, event)
+  handleDamageEvent(fieldId, cropType, damagePercentage, event)
+end
+
+-- Save/Load Functions
+function loadSavegame(savegamePath)
+    -- Load game data
+    local filename = savegamePath .. "/cropinsurance.xml"
+    if FSUtils.fileExists(filename) then
+        local file = FSUtils.openFile(filename, "r")
+        if file then
+            local xml = XML.load(file)
+            FSUtils.closeFile(file)
+            if xml then
+                -- Load insurance policies
+                g_insurance = {}
+                if xml.insurancePolicies and xml.insurancePolicies.policy then
+                    for _, policyNode in ipairs(xml.insurancePolicies.policy) do
+                        local fieldId = tonumber(policyNode.fieldId)
+                        g_insurance[fieldId] = {
+                            fieldId = fieldId,
+                            cropType = policyNode.cropType,
+                            coveragePercentage = tonumber(policyNode.coveragePercentage),
+                            premiumRate = tonumber(policyNode.premiumRate),
+                            startDate = tonumber(policyNode.startDate),
+                            active = policyNode.active == "true",
+                            premium = tonumber(policyNode.premium)
+                        }
+                    end
+                end
+
+                -- Load damage history
+                g_damageHistory = {}
+                if xml.damageHistory and xml.damageHistory.event then
+                    for _, eventNode in ipairs(xml.damageHistory.event) do
+                        table.insert(g_damageHistory, {
+                            fieldId = tonumber(eventNode.fieldId),
+                            cropType = eventNode.cropType,
+                            damagePercentage = tonumber(eventNode.damagePercentage),
+                            loss = tonumber(eventNode.loss),
+                            payout = tonumber(eventNode.payout),
+                            event = eventNode.event,
+                            time = tonumber(eventNode.time),
+                        })
+                    end
+                end
+                logMessage("Loaded crop insurance data from " .. filename)
+            else
+                logMessage("Error loading XML from " .. filename)
+            end
         else
-            print("Insufficient funds to purchase insurance policy.")
+            logMessage("Error opening file " .. filename)
         end
-    end
-end
-
--- Function to file an insurance claim
-local function fileClaim(assetId, damageAmount)
-    local policy = insurancePolicies[assetId]
-    if not policy then
-        print("No insurance policy found for asset (ID: " .. assetId .. ").")
-        return
-    end
-
-    if policy.coverageAmount >= damageAmount then
-        local currentMoney = getPlayerMoney() -- Assuming this function exists
-        setPlayerMoney(currentMoney + damageAmount) -- Assuming this function exists
-
-        print("Claim of " .. formatMoney(damageAmount) .. " paid for asset (ID: " .. assetId .. ").")
-        insurancePolicies[assetId] = nil -- Remove policy after claim
-        saveInsuranceData()
     else
-        print("Damage exceeds coverage amount for asset (ID: " .. assetId .. ").")
-        --  You might pay out the coverage amount, or a prorated amount.
-        local currentMoney = getPlayerMoney()
-        setPlayerMoney(currentMoney + policy.coverageAmount)
-        print("Claim of " .. formatMoney(policy.coverageAmount) .. " paid for asset (ID: "..assetId..").")
-        insurancePolicies[assetId] = nil
-        saveInsuranceData()
+        logMessage("No crop insurance data found at " .. filename)
+        initializeInsurance()
     end
 end
 
--- Function to handle damage events (e.g., crop loss, vehicle accident)
-local function handleDamageEvent(assetId, assetType, damageAmount)
-    -- Check if the asset is insured
-    if insurancePolicies[assetId] then
-        fileClaim(assetId, damageAmount)
+function saveSavegame(savegamePath)
+    -- Save game data
+    local filename = savegamePath .. "/cropinsurance.xml"
+    local xml = {
+        insurancePolicies = { policy = {} },
+        damageHistory = { event = {} },
+    }
+
+    -- Save insurance policies
+    for _, policy in pairs(g_insurance) do
+        table.insert(xml.insurancePolicies.policy, {
+            fieldId = policy.fieldId,
+            cropType = policy.cropType,
+            coveragePercentage = policy.coveragePercentage,
+            premiumRate = policy.premiumRate,
+            startDate = policy.startDate,
+            active = tostring(policy.active),
+            premium = policy.premium
+        })
+    end
+
+    -- Save damage history
+    for _, event in ipairs(g_damageHistory) do
+        table.insert(xml.damageHistory.event, {
+            fieldId = event.fieldId,
+            cropType = event.cropType,
+            damagePercentage = event.damagePercentage,
+            loss = event.loss,
+            payout = event.payout,
+            event = event.event,
+            time = event.time,
+        })
+    end
+
+    local file = FSUtils.openFile(filename, "w")
+    if file then
+        XML.save(file, xml)
+        FSUtils.closeFile(file)
+        logMessage("Saved crop insurance data to " .. filename)
     else
-        print("Asset (ID: " .. assetId .. ") is not insured.")
+        logMessage("Error saving crop insurance data to " .. filename)
     end
 end
 
--- Function to handle the game update loop (for checking policy expiry, etc.)
-local function update(deltaTime)
-    --  Check for expired policies
-    local gameDate = getGameDate() -- Hypothetical function
-    for assetId, policy in pairs(insurancePolicies) do
-        if policy.expiryDate and gameDate > policy.expiryDate then
-            print("Insurance policy for asset (ID: " .. assetId .. ") has expired.")
-            insurancePolicies[assetId] = nil
-            saveInsuranceData()
-        end
-    end
+-- Game Callback Functions
+function onCreate()
+    -- Initialize
+    logMessage("Crop Insurance Script Loaded")
+    initializeInsurance()
+    g_cropData = {}
+    g_damageHistory = {}
+    g_eventLog = {}
 end
 
--- Event listeners and initialization
-Events.update.add(update)
---  Example event for when a vehicle is purchased
--- Events.vehiclePurchased.add(onVehiclePurchased) -- Hypothetical event
---  Example event for when crops are damaged
--- Events.cropDamage.add(onCropDamage)       -- Hypothetical event
-
--- Example of offering insurance when a vehicle is purchased
-local function onVehiclePurchased(vehicleId, vehiclePrice)
-    offerInsurance(vehicleId, "vehicle", vehiclePrice, "comprehensive", getGameDate() + 365) -- Example expiry: 1 year
+function onInit()
+  -- Called at the beginning of a new game
+  logMessage("onInit")
+  g_cropData = {}
+  g_damageHistory = {}
+  initializeInsurance()
 end
 
--- Example of handling crop damage
-local function onCropDamage(fieldId, cropType, damagePercentage)
-    --  Calculate damageAmount based on crop value and damagePercentage
-    local cropValue = getCropValue(fieldId, cropType) -- Hypothetical function
-    local damageAmount = cropValue * damagePercentage
-    handleDamageEvent(fieldId, "crop", damageAmount)
+function onDayEvent()
+    -- Daily updates
+    logMessage("onDayEvent")
+    --  Any daily checks or updates can go here.
 end
 
--- Load configuration and insurance data
-loadConfiguration()
-loadInsuranceData()
+function onSavegameLoaded(savegamepath)
+    -- Load data
+    logMessage("onSavegameLoaded: " .. savegamepath)
+    loadSavegame(savegamepath)
+end
+
+function onSavegameSaving(savegamepath)
+    -- Save data
+    logMessage("onSavegameSaving: " .. savegamepath)
+    saveSavegame(savegamepath)
+end
+
+function onFieldPlanted(fieldId, cropType)
+  --Called when a field is planted
+  logMessage("Field " .. fieldId .. " was planted with " .. cropType)
+  g_cropData[fieldId] = { cropType = cropType, yield = getCropYield(fieldId) }
+end
+
+function onCropHarvested(fieldId)
+  --Called when a field is harvested
+  logMessage("Field " .. fieldId .. " was harvested")
+  g_cropData[fieldId] = nil
+end
+
+-- Example Usage (Conceptual)
+-- createInsurancePolicy(1, "wheat", 80, 0.02)  -- 80% coverage, 2% premium rate
+-- handleDamageEvent(1, "wheat", 50, "Hailstorm") -- 50% damage due to hailstorm
+-- local policy = getInsurancePolicy(1)
+-- if policy then
+--     logMessage("Policy for field 1: " .. policy.cropType .. ", Coverage: " .. policy.coveragePercentage .. "%")
+-- end
+
